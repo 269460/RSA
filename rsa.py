@@ -21,13 +21,14 @@ def generate_rsa_keys(bits=1024):
 
 def rsa_encrypt(data, public_key):
     e, n = public_key
-    block_size = (n.bit_length() // 8) - 1
+    max_block_size = (n.bit_length() + 7) // 8 - 1  # Maksymalny rozmiar bloku danych, który może być bezpiecznie zaszyfrowany
     encrypted_data = bytearray()
-    for i in range(0, len(data), block_size):
-        block = data[i:i+block_size]
+    for i in range(0, len(data), max_block_size):
+        block = data[i:i+max_block_size]
         integer = int.from_bytes(block, 'big')
         encrypted_integer = pow(integer, e, n)
-        encrypted_data.extend(encrypted_integer.to_bytes(block_size + 1, 'big'))
+        # Alokacja wystarczającej ilości bajtów dla zaszyfrowanego wyniku
+        encrypted_data.extend(encrypted_integer.to_bytes((n.bit_length() + 7) // 8, 'big'))
     return bytes(encrypted_data)
 
 def rsa_decrypt(data, private_key):
