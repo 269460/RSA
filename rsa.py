@@ -58,7 +58,9 @@ def rsa_decrypt(data, private_key):
         decrypted_data.extend(decrypted_integer.to_bytes(block_size - 1, 'big'))
     return bytes(decrypted_data)
 
-def modify_png(file_path, public_key, save_path):
+def modify_png(file_path, public_key, save_path, mode=0):
+    # mode = 0 decompression->enryption->compression
+    # mode = 1 encryption
     e, n = public_key  # Rozpakowuj klucz publiczny do e i n
     data = read_png(file_path)
     new_png_data = bytearray(data[:8])
@@ -77,11 +79,17 @@ def modify_png(file_path, public_key, save_path):
 
         if chunk_type == b'IDAT':
             try:
-                decompressed_data = zlib.decompress(chunk_data)
+                if mode==0:
+                    decompressed_data = zlib.decompress(chunk_data)
+                elif mode==1:
+                    decompressed_data=chunk_data
                 padded_data = add_padding(decompressed_data, (n.bit_length() + 7) // 8 - 1)
                 encrypted_data = rsa_encrypt(padded_data, public_key)
                 encrypted_image_data.extend(encrypted_data)
-                recompressed_data = zlib.compress(encrypted_data)
+                if mode==0:
+                    recompressed_data = zlib.compress(encrypted_data)
+                elif mode==1:
+                    recompressed_data = encrypted_data
                 chunk_data = recompressed_data
                 chunk_len = len(chunk_data)
             except zlib.error as e:
@@ -102,7 +110,9 @@ def modify_png(file_path, public_key, save_path):
 
     return new_png_data, encrypted_image_data
 
-def decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path):
+def decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path, mode=0):
+    # mode = 0 decompression->decryption->compression
+    # mode = 1 decryption
     data = read_png(encrypted_png_path)
     new_png_data = bytearray(data[:8])  # Kopiowanie nagłówka PNG
     pos = 8
@@ -119,14 +129,19 @@ def decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_p
 
         if chunk_type == b'IDAT':
             try:
-                # Dekompresja zaszyfrowanych danych IDAT
-                encrypted_data = zlib.decompress(chunk_data)
+                if mode==0:
+                    encrypted_data = zlib.decompress(chunk_data)
+                elif mode==1:
+                    encrypted_data=chunk_data
                 # Deszyfrowanie danych
                 decrypted_data = rsa_decrypt(encrypted_data, private_key)
                 # Usunięcie paddingu
                 padded_decrypted_data = remove_padding(decrypted_data)
                 # Kompresja danych po usunięciu paddingu
-                decompressed_data = zlib.compress(padded_decrypted_data)
+                if mode==0:
+                    decompressed_data = zlib.compress(padded_decrypted_data)
+                elif mode==1:
+                    decompressed_data = padded_decrypted_data
                 chunk_data = decompressed_data
                 chunk_len = len(chunk_data)
             except zlib.error as e:
@@ -177,12 +192,14 @@ original_png_path = "example9.png"
 encrypted_png_path = "encrypted_example.png"
 decrypted_png_path = "decrypted_example.png"
 
-new_png_data, encrypted_image_data = modify_png(original_png_path, public_key, encrypted_png_path)
-decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path)
-
 print("Obraz oryginalny:")
 display_image_from_bytes(read_png(original_png_path))
-print("Dane obrazu zaszyfrowanego:")
-display_encrypted_image(encrypted_image_data)
-print("Obraz odszyfrowany:")
-display_image_from_bytes(read_png(decrypted_png_path))
+
+for mode in range(2):
+    new_png_data, encrypted_image_data = modify_png(original_png_path, public_key, encrypted_png_path, mode)
+    decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path, mode)
+
+    print("Dane obrazu zaszyfrowanego:")
+    display_encrypted_image(encrypted_image_data)
+    print("Obraz odszyfrowany:")
+    display_image_from_bytes(read_png(decrypted_png_path))
