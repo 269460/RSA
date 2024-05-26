@@ -188,7 +188,7 @@ def display_encrypted_image(data_bytes):
         print(f"Wystąpił błąd podczas wyświetlania obrazu: {str(e)}")
 
 public_key, private_key = generate_rsa_keys(bits=1024)
-original_png_path = "example9.png"
+original_png_path = "example5.png"
 encrypted_png_path = "encrypted_example.png"
 decrypted_png_path = "decrypted_example.png"
 
