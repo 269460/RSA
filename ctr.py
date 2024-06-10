@@ -2,185 +2,132 @@ import zlib
 import struct
 import numpy as np
 import matplotlib.pyplot as plt
-from sympy import randprime, isprime
+from sympy import randprime
 from PIL import Image
 import io
 import random
 import math
 
-# Funkcja do odczytu pliku PNG
+
 def read_png(file_path):
     with open(file_path, 'rb') as file:
         data = file.read()
     return data
 
-# Funkcja generująca klucze RSA
+
 def generate_rsa_keys(bits=1024):
-    p = randprime(2**(bits//2 - 1), 2**(bits//2))
-    q = randprime(2**(bits//2 - 1), 2**(bits//2))
+    p = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
+    q = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
     while p == q:
-        q = randprime(2**(bits//2 - 1), 2**(bits//2))
+        q = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
     n = p * q
     phi = (p - 1) * (q - 1)
     while True:
-        e = random.randint(2, phi-1)
+        e = random.randint(2, phi - 1)
         if math.gcd(e, phi) == 1:
             break
     d = pow(e, -1, phi)
     return (e, n), (d, n)
 
-# Funkcja dodająca padding do danych
-def add_padding(data, block_size):
-    padding_length = block_size - (len(data) % block_size)
-    padded_data = data + bytes([padding_length] * padding_length)
-    return padded_data
 
-# Funkcja usuwająca padding z danych
-def remove_padding(data):
-    padding_length = data[-1]
-    return data[:-padding_length]
+def xor_bytes(a, b):
+    return bytes(x ^ y for x, y in zip(a, b))
 
-# Funkcja szyfrująca dane za pomocą RSA
-def rsa_encrypt(data, public_key):
+
+def generate_keystream(public_key, counter, length):
     e, n = public_key
-    max_block_size = (n.bit_length() + 7) // 8 - 1
-    encrypted_data = bytearray()
-    for i in range(0, len(data), max_block_size):
-        block = data[i:i+max_block_size]
-        integer = int.from_bytes(block, 'big')
-        encrypted_integer = pow(integer, e, n)
-        encrypted_data.extend(encrypted_integer.to_bytes((n.bit_length() + 7) // 8, 'big'))
-    return bytes(encrypted_data)
+    keystream = bytearray()
+    while len(keystream) < length:
+        counter_bytes = counter.to_bytes((n.bit_length() + 7) // 8, byteorder='big')
+        counter_encrypted = int.from_bytes(counter_bytes, byteorder='big')
+        encrypted_counter = pow(counter_encrypted, e, n)
+        keystream.extend(encrypted_counter.to_bytes((n.bit_length() + 7) // 8, byteorder='big'))
+        counter += 1
+    return bytes(keystream[:length])
 
-# Funkcja deszyfrująca dane za pomocą RSA
-def rsa_decrypt(data, private_key):
-    d, n = private_key
-    block_size = (n.bit_length() + 7) // 8
-    decrypted_data = bytearray()
-    for i in range(0, len(data), block_size):
-        block = data[i:i+block_size]
-        integer = int.from_bytes(block, 'big')
-        decrypted_integer = pow(integer, d, n)
-        decrypted_data.extend(decrypted_integer.to_bytes(block_size - 1, 'big'))
-    return bytes(decrypted_data)
 
-# Funkcja modyfikująca plik PNG poprzez szyfrowanie jego danych
-def modify_png(file_path, public_key, save_path, mode=0):
-    e, n = public_key
+def modify_png_ctr(file_path, public_key, save_path):
     data = read_png(file_path)
     new_png_data = bytearray(data[:8])
     pos = 8
+    counter = 0  # Initial counter value
     encrypted_image_data = bytearray()
 
     while pos < len(data):
         chunk_len = struct.unpack('>I', data[pos:pos + 4])[0]
-        pos += 4
-        chunk_type = data[pos:pos + 4]
-        pos += 4
-        chunk_data = data[pos:pos + chunk_len]
-        pos += chunk_len
-        crc = data[pos:pos + 4]
-        pos += 4
+        chunk_type = data[pos + 4:pos + 8]
+        chunk_data = data[pos + 8:pos + 8 + chunk_len]
+        pos += 12 + chunk_len
 
         if chunk_type == b'IDAT':
-            try:
-                if mode == 0:
-                    decompressed_data = zlib.decompress(chunk_data)
-                elif mode == 1:
-                    decompressed_data = chunk_data
-                padded_data = add_padding(decompressed_data, (n.bit_length() + 7) // 8 - 1)
-                encrypted_data = rsa_encrypt(padded_data, public_key)
-                encrypted_image_data.extend(encrypted_data)
-                if mode == 0:
-                    recompressed_data = zlib.compress(encrypted_data)
-                elif mode == 1:
-                    recompressed_data = encrypted_data
-                chunk_data = recompressed_data
-                chunk_len = len(chunk_data)
-            except zlib.error as e:
-                print("Error decompressing data: ", str(e))
-                continue
+            decompressed_data = zlib.decompress(chunk_data)
+            keystream = generate_keystream(public_key, counter, len(decompressed_data))
+            encrypted_data = xor_bytes(decompressed_data, keystream)
+            compressed_data = zlib.compress(encrypted_data)
+            chunk_data = compressed_data
+            chunk_len = len(chunk_data)
+            counter += 1
+            encrypted_image_data.extend(encrypted_data)
 
-        new_crc = zlib.crc32(chunk_type)
-        new_crc = zlib.crc32(chunk_data, new_crc)
-        new_crc = struct.pack('>I', new_crc & 0xffffffff)
-
-        new_png_data.extend(struct.pack('>I', chunk_len))
-        new_png_data.extend(chunk_type)
-        new_png_data.extend(chunk_data)
-        new_png_data.extend(new_crc)
+        crc = zlib.crc32(chunk_type + chunk_data) & 0xffffffff
+        new_png_data += struct.pack('>I', chunk_len) + chunk_type + chunk_data + struct.pack('>I', crc)
 
     with open(save_path, 'wb') as file:
         file.write(new_png_data)
 
-    return new_png_data, encrypted_image_data
+    return encrypted_image_data
 
-# Funkcja deszyfrująca i rekonstruująca plik PNG
-def decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path, mode=0):
+
+def decrypt_and_reconstruct_png_ctr(encrypted_png_path, public_key, private_key, decrypted_png_path):
     data = read_png(encrypted_png_path)
     new_png_data = bytearray(data[:8])
     pos = 8
+    counter = 0  # Initial counter value
 
     while pos < len(data):
         chunk_len = struct.unpack('>I', data[pos:pos + 4])[0]
-        pos += 4
-        chunk_type = data[pos:pos + 4]
-        pos += 4
-        chunk_data = data[pos:pos + chunk_len]
-        pos += chunk_len
-        crc = data[pos:pos + 4]
-        pos += 4
+        chunk_type = data[pos + 4:pos + 8]
+        encrypted_chunk_data = data[pos + 8:pos + 8 + chunk_len]
+        pos += 12 + chunk_len
 
         if chunk_type == b'IDAT':
-            try:
-                if mode == 0:
-                    encrypted_data = zlib.decompress(chunk_data)
-                elif mode == 1:
-                    encrypted_data = chunk_data
-                decrypted_data = rsa_decrypt(encrypted_data, private_key)
-                padded_decrypted_data = remove_padding(decrypted_data)
-                if mode == 0:
-                    decompressed_data = zlib.compress(padded_decrypted_data)
-                elif mode == 1:
-                    decompressed_data = padded_decrypted_data
-                chunk_data = decompressed_data
-                chunk_len = len(chunk_data)
-            except zlib.error as e:
-                print(f"Błąd zlib przy próbie dekompresji: {str(e)}")
-                continue
+            decompressed_data = zlib.decompress(encrypted_chunk_data)
+            keystream = generate_keystream(public_key, counter, len(decompressed_data))
+            decrypted_data = xor_bytes(decompressed_data, keystream)
+            compressed_data = zlib.compress(decrypted_data)
+            chunk_data = compressed_data
+            chunk_len = len(chunk_data)
+            counter += 1
+        else:
+            chunk_data = encrypted_chunk_data
 
-        new_crc = zlib.crc32(chunk_type)
-        new_crc = zlib.crc32(chunk_data, new_crc)
-        new_crc = struct.pack('>I', new_crc & 0xffffffff)
-
-        new_png_data.extend(struct.pack('>I', chunk_len))
-        new_png_data.extend(chunk_type)
-        new_png_data.extend(chunk_data)
-        new_png_data.extend(new_crc)
+        crc = zlib.crc32(chunk_type + chunk_data) & 0xffffffff
+        new_png_data += struct.pack('>I', chunk_len) + chunk_type + chunk_data + struct.pack('>I', crc)
 
     with open(decrypted_png_path, 'wb') as file:
         file.write(new_png_data)
 
-# Funkcja wyświetlająca obraz z danych bajtowych
+
 def display_image_from_bytes(data_bytes):
     img = Image.open(io.BytesIO(data_bytes))
     plt.imshow(img)
     plt.axis('off')
     plt.show()
 
-# Funkcja wyświetlająca zaszyfrowane dane obrazu
-def display_encrypted_image(data_bytes):
-    if len(data_bytes) == 0:
+
+def display_encrypted_image(encrypted_image_data):
+    """Wyświetla zaszyfrowany obraz jako dane RGB."""
+    if len(encrypted_image_data) == 0:
         print("Brak danych do wyświetlenia. Możliwe, że zaszyfrowane dane są puste lub uszkodzone.")
         return
 
     try:
-        length = len(data_bytes)
+        length = len(encrypted_image_data)
         side = int(np.sqrt(length / 3))  # Estymowanie wymiarów obrazu dla RGB
         if side * side * 3 > length:
             side -= 1
 
-        image_array = np.frombuffer(data_bytes[:side * side * 3], dtype=np.uint8).reshape((side, side, 3))
+        image_array = np.frombuffer(encrypted_image_data[:side * side * 3], dtype=np.uint8).reshape((side, side, 3))
         plt.imshow(image_array)
         plt.axis('off')
         plt.title("Zaszyfrowane dane obrazu")
@@ -188,7 +135,7 @@ def display_encrypted_image(data_bytes):
     except Exception as e:
         print(f"Wystąpił błąd podczas wyświetlania obrazu: {str(e)}")
 
-# Główna część programu
+
 public_key, private_key = generate_rsa_keys(bits=1024)
 original_png_path = "example2.png"
 encrypted_png_path = "encrypted_example.png"
@@ -197,11 +144,11 @@ decrypted_png_path = "decrypted_example.png"
 print("Obraz oryginalny:")
 display_image_from_bytes(read_png(original_png_path))
 
-for mode in range(2):
-    new_png_data, encrypted_image_data = modify_png(original_png_path, public_key, encrypted_png_path, mode)
-    decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_path, mode)
+encrypted_image_data = modify_png_ctr(original_png_path, public_key, encrypted_png_path)
+decrypt_and_reconstruct_png_ctr(encrypted_png_path, public_key, private_key, decrypted_png_path)
 
-    print("Dane obrazu zaszyfrowanego (surowe dane):")
-    display_encrypted_image(encrypted_image_data)
-    print("Obraz odszyfrowany:")
-    display_image_from_bytes(read_png(decrypted_png_path))
+print("Obraz zaszyfrowany:")
+display_encrypted_image(encrypted_image_data)
+
+print("Obraz odszyfrowany:")
+display_image_from_bytes(read_png(decrypted_png_path))
