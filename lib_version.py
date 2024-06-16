@@ -2,34 +2,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import hashes, serialization
 import zlib
 import struct
-from PIL import Image
-import io
-import matplotlib.pyplot as plt
-import numpy as np
-
-def read_png(file_path):
-    """Czyta plik PNG i zwraca jego zawartość jako bajty."""
-    with open(file_path, 'rb') as file:
-        data = file.read()
-    return data
-
-def generate_rsa_keys():
-    """Generuje i zwraca publiczny i prywatny klucz RSA."""
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
-    public_key = private_key.public_key()
-    return public_key, private_key
-
-def add_padding(data, block_size):
-    padding_length = block_size - (len(data) % block_size)
-    padded_data = data + bytes([padding_length] * padding_length)
-    return padded_data
-
-def remove_padding(data):
-    padding_length = data[-1]
-    return data[:-padding_length]
+from helper_functions import *
 
 def rsa_encrypt(data, public_key):
     """Szyfruje dane przy użyciu publicznego klucza RSA."""
@@ -117,33 +90,6 @@ def decrypt_and_reconstruct_png(encrypted_png_path, private_key, decrypted_png_p
         new_png_data += struct.pack('>I', crc)
     with open(decrypted_png_path, 'wb') as file:
         file.write(new_png_data)
-
-def display_image_from_bytes(data_bytes):
-    """Wyświetla obraz z bajtów danych."""
-    img = Image.open(io.BytesIO(data_bytes))
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
-
-def display_encrypted_image(encrypted_image_data):
-    """Wyświetla zaszyfrowany obraz jako dane RGB."""
-    if len(encrypted_image_data) == 0:
-        print("Brak danych do wyświetlenia. Możliwe, że zaszyfrowane dane są puste lub uszkodzone.")
-        return
-
-    try:
-        length = len(encrypted_image_data)
-        side = int(np.sqrt(length / 3))  # Estymowanie wymiarów obrazu dla RGB
-        if side * side * 3 > length:
-            side -= 1
-
-        image_array = np.frombuffer(encrypted_image_data[:side * side * 3], dtype=np.uint8).reshape((side, side, 3))
-        plt.imshow(image_array)
-        plt.axis('off')
-        plt.title("Zaszyfrowane dane obrazu")
-        plt.show()
-    except Exception as e:
-        print(f"Wystąpił błąd podczas wyświetlania obrazu: {str(e)}")
 
 # Generowanie kluczy RSA
 public_key, private_key = generate_rsa_keys()

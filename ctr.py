@@ -2,37 +2,14 @@ import zlib
 import struct
 import numpy as np
 import matplotlib.pyplot as plt
-from sympy import randprime
+#from sympy import randprime
 from PIL import Image
-import io
 import random
 import math
-
-
-def read_png(file_path):
-    with open(file_path, 'rb') as file:
-        data = file.read()
-    return data
-
-
-def generate_rsa_keys(bits=1024):
-    p = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
-    q = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
-    while p == q:
-        q = randprime(2 ** (bits // 2 - 1), 2 ** (bits // 2))
-    n = p * q
-    phi = (p - 1) * (q - 1)
-    while True:
-        e = random.randint(2, phi - 1)
-        if math.gcd(e, phi) == 1:
-            break
-    d = pow(e, -1, phi)
-    return (e, n), (d, n)
-
+from helper_functions import *
 
 def xor_bytes(a, b):
     return bytes(x ^ y for x, y in zip(a, b))
-
 
 def generate_keystream(public_key, counter, length):
     e, n = public_key
@@ -106,34 +83,6 @@ def decrypt_and_reconstruct_png_ctr(encrypted_png_path, public_key, private_key,
 
     with open(decrypted_png_path, 'wb') as file:
         file.write(new_png_data)
-
-
-def display_image_from_bytes(data_bytes):
-    img = Image.open(io.BytesIO(data_bytes))
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
-
-
-def display_encrypted_image(encrypted_image_data):
-    """Wyświetla zaszyfrowany obraz jako dane RGB."""
-    if len(encrypted_image_data) == 0:
-        print("Brak danych do wyświetlenia. Możliwe, że zaszyfrowane dane są puste lub uszkodzone.")
-        return
-
-    try:
-        length = len(encrypted_image_data)
-        side = int(np.sqrt(length / 3))  # Estymowanie wymiarów obrazu dla RGB
-        if side * side * 3 > length:
-            side -= 1
-
-        image_array = np.frombuffer(encrypted_image_data[:side * side * 3], dtype=np.uint8).reshape((side, side, 3))
-        plt.imshow(image_array)
-        plt.axis('off')
-        plt.title("Zaszyfrowane dane obrazu")
-        plt.show()
-    except Exception as e:
-        print(f"Wystąpił błąd podczas wyświetlania obrazu: {str(e)}")
 
 
 public_key, private_key = generate_rsa_keys(bits=1024)
